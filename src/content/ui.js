@@ -1,6 +1,7 @@
 /**
  * ui.js — Floating glassmorphic panel injected into claude.ai
  * Always shows both export + import. Closes on logout.
+ * v1.1 — selective message export with Select All / Deselect All
  */
 
 const UI = (() => {
@@ -28,7 +29,6 @@ const UI = (() => {
       }
     }, 800);
 
-    // Also watch for Claude injecting the login form into the DOM
     const loginObserver = new MutationObserver(() => {
       const loginForm = document.querySelector('form[action*="login"], input[name="email"][type="email"]');
       if (loginForm && _panel) {
@@ -60,10 +60,27 @@ const UI = (() => {
         <!-- EXPORT SECTION — always visible -->
         <div class="ct-section-label">EXPORT</div>
         <button class="ct-btn ct-btn-export" id="ct-export-btn">
-          <span class="ct-btn-icon">⬇</span><span>Export Current Chat</span>
+          <span class="ct-btn-icon">⬇</span><span>Select Messages</span>
         </button>
         <div class="ct-hint" id="ct-export-hint">Navigate to a chat first</div>
         <div class="ct-status" id="ct-export-status"></div>
+
+        <!-- MESSAGE SELECTION — hidden until export clicked -->
+        <div class="ct-select-wrapper" id="ct-select-wrapper" style="display:none">
+          <div class="ct-select-controls">
+            <button class="ct-sel-ctrl-btn" id="ct-sel-all">Select All</button>
+            <span class="ct-sel-divider">·</span>
+            <button class="ct-sel-ctrl-btn" id="ct-sel-none">Deselect All</button>
+            <span class="ct-sel-count" id="ct-sel-count"></span>
+          </div>
+          <div class="ct-msg-list" id="ct-msg-list"></div>
+          <div class="ct-select-actions">
+            <button class="ct-btn ct-btn-dl" id="ct-download-btn">
+              <span class="ct-btn-icon">⬇</span><span>Download Selected</span>
+            </button>
+            <button class="ct-btn ct-btn-cancel" id="ct-cancel-btn">Cancel</button>
+          </div>
+        </div>
 
         <div class="ct-divider"></div>
 
@@ -92,7 +109,6 @@ const UI = (() => {
     bindEvents(panel);
     updateExportHint();
 
-    // MutationObserver: only re-attach if NOT deliberately closed
     if (_observer) _observer.disconnect();
     _observer = new MutationObserver(() => {
       if (!_closed && !document.getElementById(CT.PANEL_ID)) {
@@ -107,7 +123,7 @@ const UI = (() => {
   // ── Events ────────────────────────────────────────────────────
   function bindEvents(panel) {
 
-    // ✕ Close — sets flag so MutationObserver won't re-add it
+    // ✕ Close
     panel.querySelector('.ct-close').addEventListener('click', (e) => {
       e.stopPropagation();
       _closed = true;
@@ -149,8 +165,24 @@ const UI = (() => {
       document.body.style.userSelect = '';
     });
 
-    // Export button
-    panel.querySelector('#ct-export-btn').addEventListener('click', handleExport);
+    // Export button — fetch then show selection UI
+    panel.querySelector('#ct-export-btn').addEventListener('click', handleFetchForSelection);
+
+    // Select All / Deselect All
+    panel.querySelector('#ct-sel-all').addEventListener('click', () => {
+      panel.querySelectorAll('.ct-msg-cb').forEach(cb => cb.checked = true);
+      updateSelCount();
+    });
+    panel.querySelector('#ct-sel-none').addEventListener('click', () => {
+      panel.querySelectorAll('.ct-msg-cb').forEach(cb => cb.checked = false);
+      updateSelCount();
+    });
+
+    // Download selected
+    panel.querySelector('#ct-download-btn').addEventListener('click', handleDownloadSelected);
+
+    // Cancel selection
+    panel.querySelector('#ct-cancel-btn').addEventListener('click', closeSelectionUI);
 
     // Drop zone
     const dropzone = panel.querySelector('#ct-dropzone');
@@ -171,18 +203,10 @@ const UI = (() => {
     panel.querySelector('#ct-inject-btn').addEventListener('click', handleInject);
   }
 
-  // ── Export ────────────────────────────────────────────────────
-  function updateExportHint() {
-    if (!_panel) return;
-    const hint = _panel.querySelector('#ct-export-hint');
-    const btn  = _panel.querySelector('#ct-export-btn');
-    const onChat = CT.CHAT_URL_PATTERN.test(location.href);
-    hint.style.display = onChat ? 'none' : '';
-    btn.disabled = !onChat;
-    btn.style.opacity = onChat ? '1' : '0.45';
-  }
+  // ── Export: Step 1 — Fetch & show selection UI ────────────────
+  let _fetchedParsed = null;
 
-  async function handleExport() {
+  async function handleFetchForSelection() {
     const statusEl = document.getElementById('ct-export-status');
     setStatus(statusEl, 'loading', 'Reading page...');
 
@@ -191,9 +215,7 @@ const UI = (() => {
       if (!match) throw new Error('Navigate to a chat first');
       const conversationId = match[1];
 
-      // Get org ID — cached → DOM → bridge API
       let orgId = BridgeClient._orgId;
-
       if (!orgId) {
         const el = document.querySelector('[data-organization-uuid]');
         if (el) orgId = el.dataset.organizationUuid;
@@ -206,24 +228,115 @@ const UI = (() => {
         } catch (_) {}
       }
       if (!orgId) throw new Error('Could not find org ID. Click a sidebar chat first.');
-
       BridgeClient._orgId = orgId;
 
       setStatus(statusEl, 'loading', 'Fetching messages...');
       const rawData = await BridgeClient.request('conversation', { orgId, conversationId });
-      const parsed  = parseConversation(rawData);
+      _fetchedParsed = parseConversation(rawData);
 
+      setStatus(statusEl, '', '');
+      showSelectionUI(_fetchedParsed);
+    } catch (err) {
+      setStatus(statusEl, 'error', `✗ ${err.message}`);
+    }
+  }
+
+  // ── Export: Step 2 — Render selection UI ─────────────────────
+  function showSelectionUI(parsed) {
+    const wrapper = document.getElementById('ct-select-wrapper');
+    const list    = document.getElementById('ct-msg-list');
+    const exportBtn = document.getElementById('ct-export-btn');
+
+    // Widen the panel for the list
+    if (_panel) _panel.style.width = '280px';
+    exportBtn.style.display = 'none';
+
+    list.innerHTML = '';
+    for (const msg of parsed.messages) {
+      const preview = getMessagePreview(msg);
+      const roleLabel = msg.role === 'human' ? '👤' : '🤖';
+      const item = document.createElement('label');
+      item.className = 'ct-msg-item';
+      item.innerHTML = `
+        <input type="checkbox" class="ct-msg-cb" data-index="${msg.index}" checked />
+        <span class="ct-msg-role">${roleLabel}</span>
+        <span class="ct-msg-preview">${preview}</span>
+      `;
+      item.querySelector('.ct-msg-cb').addEventListener('change', updateSelCount);
+      list.appendChild(item);
+    }
+
+    wrapper.style.display = '';
+    updateSelCount();
+  }
+
+  function closeSelectionUI() {
+    const wrapper   = document.getElementById('ct-select-wrapper');
+    const exportBtn = document.getElementById('ct-export-btn');
+    wrapper.style.display = 'none';
+    exportBtn.style.display = '';
+    if (_panel) _panel.style.width = '220px';
+    _fetchedParsed = null;
+  }
+
+  function updateSelCount() {
+    const all  = document.querySelectorAll('.ct-msg-cb');
+    const checked = document.querySelectorAll('.ct-msg-cb:checked');
+    const el   = document.getElementById('ct-sel-count');
+    if (el) el.textContent = `${checked.length}/${all.length}`;
+
+    const dlBtn = document.getElementById('ct-download-btn');
+    if (dlBtn) {
+      dlBtn.disabled = checked.length === 0;
+      dlBtn.style.opacity = checked.length === 0 ? '0.45' : '1';
+    }
+  }
+
+  function getMessagePreview(msg) {
+    for (const block of msg.contentBlocks || []) {
+      const t = block.text || block.code || block.result || '';
+      if (t.trim()) {
+        const clean = t.replace(/\n/g, ' ').trim();
+        return escHtml(clean.length > 48 ? clean.slice(0, 48) + '…' : clean);
+      }
+    }
+    if (msg.hasFiles) return `[File: ${msg.fileNames[0] || 'attachment'}]`;
+    return '[no text]';
+  }
+
+  function escHtml(s) {
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  // ── Export: Step 3 — Download selected ───────────────────────
+  function handleDownloadSelected() {
+    const statusEl = document.getElementById('ct-export-status');
+    if (!_fetchedParsed) { setStatus(statusEl, 'error', '✗ No data loaded'); return; }
+
+    const checked = new Set(
+      [...document.querySelectorAll('.ct-msg-cb:checked')].map(cb => parseInt(cb.dataset.index))
+    );
+
+    if (checked.size === 0) { setStatus(statusEl, 'error', '✗ Select at least one message'); return; }
+
+    const filtered = {
+      ..._fetchedParsed,
+      messages: _fetchedParsed.messages.filter(m => checked.has(m.index)),
+    };
+
+    try {
       setStatus(statusEl, 'loading', 'Saving...');
-      const slug     = parsed.conversation.title.replace(/[^a-z0-9]/gi, '_').toLowerCase().slice(0, 40);
+      const slug     = filtered.conversation.title.replace(/[^a-z0-9]/gi, '_').toLowerCase().slice(0, 40);
       const filename = `${slug}_${Date.now()}.claudetransfer`;
-      const blob     = new Blob([JSON.stringify(parsed, null, 2)], { type: 'application/json' });
+      const blob     = new Blob([JSON.stringify(filtered, null, 2)], { type: 'application/json' });
       const url      = URL.createObjectURL(blob);
       const a        = document.createElement('a');
       a.href = url; a.download = filename;
       document.body.appendChild(a); a.click();
       document.body.removeChild(a); URL.revokeObjectURL(url);
 
-      setStatus(statusEl, 'success', `✓ ${filename}`);
+      closeSelectionUI();
+      setStatus(statusEl, 'success', `✓ ${checked.size} msg(s) saved`);
     } catch (err) {
       setStatus(statusEl, 'error', `✗ ${err.message}`);
     }
@@ -294,6 +407,16 @@ const UI = (() => {
     }
   }
 
+  function updateExportHint() {
+    if (!_panel) return;
+    const hint = _panel.querySelector('#ct-export-hint');
+    const btn  = _panel.querySelector('#ct-export-btn');
+    const onChat = CT.CHAT_URL_PATTERN.test(location.href);
+    hint.style.display = onChat ? 'none' : '';
+    btn.disabled = !onChat;
+    btn.style.opacity = onChat ? '1' : '0.45';
+  }
+
   // ── Public API ────────────────────────────────────────────────
   return {
     init() {
@@ -301,7 +424,6 @@ const UI = (() => {
       watchLogout();
     },
     onUrlChange() {
-      // Restore panel if it was hidden by SPA navigation, not by user close
       if (!_closed && !document.getElementById(CT.PANEL_ID) && _panel) {
         document.body.appendChild(_panel);
       }
