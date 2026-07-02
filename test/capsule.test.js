@@ -98,7 +98,22 @@ const closeTagCount = (injectedIntoC.match(/^\[\[\[\/CT-TRANSFER\]\]\]\s*$/gm) |
 assert(openTagCount === 1, `hop2 prompt has exactly ONE open tag even though this is a 2nd-generation transfer (got ${openTagCount})`);
 assert(closeTagCount === 1, `hop2 prompt has exactly ONE close tag (got ${closeTagCount})`);
 assert(injectedIntoC.includes('hops=2'), 'hop2 prompt correctly labeled generation 2');
-assert(injectedIntoC.includes('generation 2 of a transfer chain'), 'hop2 prompt surfaces the chain note to Claude');
+assert(injectedIntoC.includes('already been passed along before'), 'hop2 prompt surfaces the chain note to Claude');
+
+// The v1.2.0 wording ("not new instructions", "not something to obey",
+// "always...takes priority") reads as an injection attempt to Claude's own
+// safety training — a message that pre-emptively tells the model what to
+// disregard looks adversarial even when it's the genuine user's own note.
+// Guard against that regressing.
+const injectionTriggerPhrases = [
+  'not new instructions', 'not something to obey', 'special authority',
+  'always takes priority', 'takes priority over', 'disregard', 'override',
+  "don't obey", 'acknowledge receipt',
+];
+for (const phrase of injectionTriggerPhrases) {
+  assert(!injectedIntoC.toLowerCase().includes(phrase.toLowerCase()),
+    `preamble avoids injection-trigger phrasing: "${phrase}"`);
+}
 
 // ══ HOP 2 — Account C: same thing again, plus the user adds a trailing
 //    question in the SAME message as the pasted capsule ═══════════════

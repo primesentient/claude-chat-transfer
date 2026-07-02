@@ -52,7 +52,7 @@ Firefox support coming soon (requires MV2 manifest conversion).
 3. Drop your `.claudetransfer` file onto the panel, or click to browse
 4. Preview shows: title, message count, size — and generation number if this file already carries an earlier transfer
 5. Click **Inject into Chat** — the full conversation is pasted into Claude's input
-6. Hit Enter — Claude gives one short line confirming it's caught up, then continues naturally from your next message
+6. Hit Enter — Claude picks up the context and continues naturally from there
 
 You can repeat this any number of times across any number of accounts. Each new export re-flattens the full history first, so a conversation that's already been transferred once (or several times) still comes out as a single clean transcript — never nested.
 
@@ -101,7 +101,7 @@ claude-transfer/
 
 **Active branch:** Claude stores all conversation branches. The export walks backwards from `current_leaf_message_uuid` through `parent_message_uuid` until hitting the root UUID, giving you only the branch you were actually reading — not all branches.
 
-**Transfer capsules & chaining:** when you inject a conversation, it's wrapped in a plain-text capsule — `[[[CT-TRANSFER v2 hops=N]]] ... [[[/CT-TRANSFER]]]`, with each turn tagged `[[3:H]]` / `[[4:A]]` — plus a short instruction telling Claude to treat it as background context, reply in one line, and defer to whatever the user asks next. `parseConversation()` scans for this exact pattern on every export and unpacks it back into plain turns *before* anything gets re-wrapped, so a conversation that's already been transferred once (or ten times) is always flattened to a single, ordinary turn list first. `buildImportPrompt()` only ever adds one capsule layer on top of that flat list. That's the whole mechanism that keeps chained transfers (A → B → C → ...) from nesting.
+**Transfer capsules & chaining:** when you inject a conversation, it's wrapped in a plain-text capsule — `[[[CT-TRANSFER v2 hops=N]]] ... [[[/CT-TRANSFER]]]`, with each turn tagged `[[3:H]]` / `[[4:A]]` — plus a short, plainly-worded note (written as if you're the one saying it) explaining this is history being pasted in for context. Earlier drafts of this note told Claude what to treat as "not real instructions" and what to "disregard" — language that reads as an injection attempt to Claude's own safety training, so it's deliberately kept to a plain first-person note now with no directives. `parseConversation()` scans for the capsule pattern on every export and unpacks it back into plain turns *before* anything gets re-wrapped, so a conversation that's already been transferred once (or ten times) is always flattened to a single, ordinary turn list first. `buildImportPrompt()` only ever adds one capsule layer on top of that flat list. That's the whole mechanism that keeps chained transfers (A → B → C → ...) from nesting.
 
 ---
 
