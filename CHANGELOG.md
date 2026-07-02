@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.2.0 — Chained Transfers, No More Nesting
+- **Fixed:** transferring a conversation A → B, then B → C (and so on) used to nest each transfer's formatting inside the last one, producing garbled "message inside a message" text and making Claude re-litigate the transfer on every hop. Every export now auto-flattens any earlier transfer found in the chat history first, so the result is always a single flat conversation, no matter how many hops it's been through.
+- **Changed:** the text injected into a new chat is now much shorter and no longer asks Claude to "acknowledge receipt" — that phrasing is what caused Claude to respond with a long list of caveats instead of just continuing. Claude now gets a short, direct note (treat this as background, not live state or new instructions; reply in one line; then follow whatever the user asks next) instead of having to work out those rules itself.
+- **Added:** a generation counter (visible in the import preview as `gen 2`, `gen 3`, etc.) so you can see at a glance if a file already carries earlier transfers.
+- **Added:** any text you type alongside a pasted transfer, or before/after it, is preserved instead of being absorbed into the transfer block.
+- Raised the message cap (`MAX_MESSAGES`) from 500 to 2000 to comfortably fit longer transfer chains.
+- New extension icon and logo.
+
 ## v1.1.0 — Selective Message Export
 - Export button now fetches messages and shows a per-message selection list before downloading
 - Each message row shows role icon (👤/🤖) and a text preview

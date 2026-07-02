@@ -361,9 +361,11 @@ const UI = (() => {
         validateImportFile(parsed);
         _importedParsed = sanitizeImport(parsed);
         const chars = getCharCount(_importedParsed);
+        const hops = _importedParsed.transferHops || 0;
+        const hopsNote = hops > 0 ? ` · gen ${hops + 1}` : '';
         infoEl.innerHTML = `
           <div class="ct-preview-title">${_importedParsed.conversation.title}</div>
-          <div class="ct-preview-meta">${_importedParsed.messages.length} msgs · ${(chars/1024).toFixed(1)}K chars</div>
+          <div class="ct-preview-meta">${_importedParsed.messages.length} msgs · ${(chars/1024).toFixed(1)}K chars${hopsNote}</div>
         `;
         previewEl.style.display = '';
         injectBtn.style.display = '';
